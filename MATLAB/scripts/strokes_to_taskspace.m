@@ -1,33 +1,59 @@
-function poses = strokes_to_taskspace(strokes, plane, penUpHeight)
-% Convert 2D strokes into a list of SE(3) poses on the writing plane.
-% Uses a fixed tool orientation relative to the plane.
-%
-% Tool z-axis points INTO the board (negative plane normal).
-% After each stroke we insert a pen-up move along +plane.z_hat.
+function poses = strokes_to_taskspace(strokes, plane, penUpHeight_m)
+% strokes_to_taskspace
+% strokes: cell array of Nx2 (meters in plane UV after scaling)
+% plane: struct from plane_from_4pts with fields x_hat,y_hat,z_hat,p0,polyUV
+% penUpHeight_m: lift distance along +z_hat (out of board)
 
-poses = {};
-
-% tool orientation from plane frame
-z_tool = -plane.z_hat;              % into board
+% Tool orientation: tool Z points INTO the board.
+z_tool = -plane.z_hat;
 x_tool = plane.x_hat;
-y_tool = Normalize(cross(z_tool, x_tool));
-x_tool = Normalize(cross(y_tool, z_tool));
+y_tool = cross(z_tool, x_tool);
+y_tool = y_tool / norm(y_tool);
 
 R = [x_tool, y_tool, z_tool];
 
-for k = 1:numel(strokes)
-    xy = strokes{k}.xy; % 2xN (meters)
+% precompute polygon in UV for boundary checks
+UVpoly = plane.polyUV;  % 4x2
+px = UVpoly(:,1);
+py = UVpoly(:,2);
 
-    % Pen-down poses along the stroke
-    for i = 1:size(xy,2)
-        p = plane.origin_pressed + xy(1,i)*plane.x_hat + xy(2,i)*plane.y_hat;
-        T = [R, p; 0 0 0 1];
-        poses{end+1} = T; %#ok<AGROW>
+poses = struct('T', {});
+kout = 0;
+
+for s = 1:numel(strokes)
+    uv = strokes{s};  % Nx2, already meters in plane coords
+    if size(uv,1) < 2, continue; end
+
+    % Clamp points to polygon bounding box (simple + safe)
+    umin = min(px); umax = max(px);
+    vmin = min(py); vmax = max(py);
+
+    u = uv(:,1); v = uv(:,2);
+    u = max(umin, min(umax, u));
+    v = max(vmin, min(vmax, v));
+
+    % Pen-up move to first point (lifted)
+    p_first = plane.p0 + plane.x_hat*u(1) + plane.y_hat*v(1) + plane.z_hat*penUpHeight_m;
+    kout = kout + 1; poses(kout).T = makeT(R, p_first);
+
+    % Lower to board (pressed plane)
+    p_down = plane.p0 + plane.x_hat*u(1) + plane.y_hat*v(1);
+    kout = kout + 1; poses(kout).T = makeT(R, p_down);
+
+    % Trace stroke points on plane
+    for i = 2:numel(u)
+        p = plane.p0 + plane.x_hat*u(i) + plane.y_hat*v(i);
+        kout = kout + 1; poses(kout).T = makeT(R, p);
     end
 
-    % Pen-up after each stroke
-    p_last = poses{end}(1:3,4);
-    p_up   = p_last + penUpHeight * plane.z_hat;
-    poses{end+1} = [R, p_up; 0 0 0 1]; %#ok<AGROW>
+    % Lift at end
+    p_last_up = plane.p0 + plane.x_hat*u(end) + plane.y_hat*v(end) + plane.z_hat*penUpHeight_m;
+    kout = kout + 1; poses(kout).T = makeT(R, p_last_up);
 end
+end
+
+function T = makeT(R,p)
+T = eye(4);
+T(1:3,1:3) = R;
+T(1:3,4) = p(:);
 end
