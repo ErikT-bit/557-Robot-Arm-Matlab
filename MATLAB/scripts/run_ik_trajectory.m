@@ -1,31 +1,27 @@
-function thetaTraj = run_ik_trajectory(robot, poses, theta0, eomg, ev, maxIters)
-%RUN_IK_TRAJECTORY Solve IK for a sequence of desired end-effector poses.
-% Note: MR IKinSpace does not accept maxIters, so maxIters is not used here.
+function thetaTraj = run_ik_trajectory(robot, poses, theta0, limits, ev, maxIters)
+% run_ik_trajectory (position-only)
+% robot.Slist, robot.M
+% poses: struct array with field .T
+% theta0: seed (5x1)
+% limits: 5x2 MoveIt limits
+% ev: position tolerance (m)
+% maxIters: iterations per waypoint
 
-n = numel(theta0);
+theta = theta0(:);
+thetaTraj = zeros(numel(theta), numel(poses));
 
-% Support poses as struct array with .T or a cell array of 4x4
-if isstruct(poses)
-    N = numel(poses);
-    getT = @(k) poses(k).T;
-elseif iscell(poses)
-    N = numel(poses);
-    getT = @(k) poses{k};
-else
-    error("poses must be a struct array (with field .T) or a cell array of 4x4 transforms");
-end
+for k = 1:numel(poses)
+    Tsd = poses(k).T;
+    p_des = Tsd(1:3,4);
 
-thetaTraj = zeros(n, N);
-theta = theta0;
+    [theta, ok] = ik_position_only_space(robot.Slist, robot.M, p_des, theta, ev, maxIters);
+    if ~ok
+        error("Position-only IK failed at waypoint %d / %d", k, numel(poses));
+    end
 
-for k = 1:N
-    Tsd = getT(k);
-
-    % MR IKinSpace signature: (Slist, M, T, thetalist0, eomg, ev)
-    [theta, success] = IKinSpace(robot.Slist, robot.M, Tsd, theta, eomg, ev);
-
-    if ~success
-        error("IK failed at waypoint %d/%d. Try a different seed or relax tolerances.", k, N);
+    [theta, violated] = clamp_to_limits(theta, limits);
+    if violated
+        warning("IK waypoint %d hit joint limits; clamped.", k);
     end
 
     thetaTraj(:,k) = theta;
