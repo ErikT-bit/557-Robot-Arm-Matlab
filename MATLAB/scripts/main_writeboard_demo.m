@@ -47,9 +47,12 @@ robot = robot_model_from_urdf(urdfPath, baseLink, tipLink, jointNames5);
 fprintf("Loaded URDF:\n  %s\n", urdfPath);
 disp("Home joint state (rad):"); disp(robot.home(:).');
 
+
 % ---- RB150 hardware (Step 3: drive ONE motor using byte protocol) ----
 % This hardware layer ONLY supports hw.sendGoal(goalPos) for motor ID=1
-hw = robot_hw_rb150_byte_1motor("COM18", 1000000);
+jointMap = []; % we’ll tune dir signs later
+hw = robot_hw_rb150_byte_5motor("COM18", 1000000, jointMap);
+hw.torqueOn();
 
 % ---- "Home" for Step 3 (motor 1 only) ----
 mid  = 512;
@@ -74,7 +77,8 @@ for k = 1:4
     input(sprintf("Move to point %d then press ENTER to capture...", k), "s");
 
     % Using last commanded thetalist (software state)
-    T_now = FKinSpace(robot.M, robot.Slist, thetalist_cmd);
+  thetalist_now = hw.readJoints();
+  T_now = FKinSpace(robot.M, robot.Slist, thetalist_now);
     P(:,k) = T_now(1:3,4);
 
     fprintf("Captured P%d = [%.4f %.4f %.4f]^T (from commanded joints)\n", ...
