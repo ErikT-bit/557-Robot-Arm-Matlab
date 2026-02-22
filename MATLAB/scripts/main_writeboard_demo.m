@@ -100,6 +100,11 @@ end
 
 plane = plane_fit_ls(P, planePressOffset_m);
 
+% --- Compatibility aliases for strokes_to_taskspace.m ---
+if isfield(plane,"nhat") && ~isfield(plane,"z_hat"), plane.z_hat = plane.nhat; end
+if isfield(plane,"xhat") && ~isfield(plane,"x_hat"), plane.x_hat = plane.xhat; end
+if isfield(plane,"yhat") && ~isfield(plane,"y_hat"), plane.y_hat = plane.yhat; end
+
 input("Plane captured. Press ENTER to torque ON and return HOME...", "s");
 
 hw.torqueOn();
