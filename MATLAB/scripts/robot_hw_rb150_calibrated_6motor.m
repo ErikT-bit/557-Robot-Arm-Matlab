@@ -6,14 +6,22 @@ function hw = robot_hw_rb150_calibrated_6motor(port, baud)
 %   Q                -> returns 12 bytes = 6x uint16 (little-endian)
 %   J a b c d e f\n  -> sets goals (may or may not print anything)
 %   T 1\n / T 0\n    -> torque on/off (may print "OK TON"/"OK TOFF" or nothing)
+%
+% FIX (22-Feb-2026):
+%   sendJoints() no longer calls flush(s) before every write.
+%   flush(s) clears BOTH input AND output serial buffers — during rapid
+%   streaming (slow-home, trajectory execution at 25-33 Hz) this discards
+%   the previous command before the firmware finishes reading it, causing
+%   the arm to jerk or not move at all.  Now we only drain stale INPUT
+%   bytes without touching the output buffer.
 
 cal = servo_calibration();
 
 s = serialport(port, baud, "Timeout", 0.2);   % short timeout, avoid hanging
 configureTerminator(s, "LF");
-flush(s);
+flush(s);   % one-time startup flush is fine
 
-% Optional: read one startup line if present (don’t block)
+% Optional: read one startup line if present (don't block)
 try
     if s.NumBytesAvailable > 0
         disp(strtrim(readline(s)));
@@ -29,7 +37,7 @@ hw.torqueOff  = @() torqueCmd(false);
 hw.close      = @closePort;
 
     function raw6 = readMotors()
-        flush(s);
+        flush(s);                     % full flush OK before a query
         write(s, uint8('Q'), "uint8");
         raw = read(s, 12, "uint8");
         if numel(raw) ~= 12
@@ -51,18 +59,17 @@ hw.close      = @closePort;
             round(raw6(1)), round(raw6(2)), round(raw6(3)), ...
             round(raw6(4)), round(raw6(5)), round(raw6(6)));
 
-        % Clear any pending bytes so we don’t accidentally read old stuff later
-        flush(s);
+        % ---- FIX: do NOT flush(s) here! ----
+        % Old code did flush(s) which nukes the output buffer too.
+        % Instead, drain stale INPUT bytes only.
+        drain_input_only();
 
         % Send command; do NOT wait for response
         write(s, uint8(cmd), "uint8");
-
-        % Optional: if firmware prints responses sometimes, drain quickly (non-blocking)
-        drain_lines_quick();
     end
 
     function torqueCmd(on)
-        flush(s);
+        flush(s);                     % full flush OK for one-shot commands
         if on
             cmd = sprintf('T 1\n');
         else
@@ -70,9 +77,9 @@ hw.close      = @closePort;
         end
         write(s, uint8(cmd), "uint8");
 
-        % Try to read a response line if it exists, but don’t hang
+        % Try to read a response line if it exists, but don't hang
         t0 = tic;
-        while toc(t0) < 0.2
+        while toc(t0) < 0.3
             if s.NumBytesAvailable > 0
                 try
                     disp(strtrim(readline(s)));
@@ -84,13 +91,14 @@ hw.close      = @closePort;
         end
     end
 
-    function drain_lines_quick()
-        % Drain any text quickly without blocking
+    function drain_input_only()
+        % Drain stale INPUT bytes quickly without blocking
+        % and WITHOUT clearing the output buffer.
         t0 = tic;
-        while toc(t0) < 0.05
+        while toc(t0) < 0.02
             if s.NumBytesAvailable <= 0, break; end
             try
-                readline(s); %#ok<NASGU>
+                read(s, min(s.NumBytesAvailable, 64), "uint8"); %#ok discard
             catch
                 break
             end
