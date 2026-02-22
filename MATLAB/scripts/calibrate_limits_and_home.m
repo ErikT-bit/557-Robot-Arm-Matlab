@@ -1,18 +1,14 @@
 function calibrate_limits_and_home()
 % calibrate_limits_and_home
-% You manually move the arm (torque OFF) to:
-%   - each motor's min extreme (press ENTER)
-%   - each motor's max extreme (press ENTER)
-% Then you move the whole arm to HOME pose (vertical up) and press ENTER.
+% Manual calibration:
+%  - torque OFF
+%  - for each motor: move to MIN extreme (ENTER), then MAX extreme (ENTER)
+%  - coupled pair (2,3) calibrated together
+%  - then move whole arm to HOME pose and press ENTER to record HOME
 %
 % Outputs:
 %   MATLAB/calibration/servo_cal_user.mat
-%   MATLAB/calibration/servo_cal_user.m  (version-controlled friendly)
-%
-% Notes:
-% - Motors 2 & 3 are coupled (cannot move independently). We calibrate them as a pair.
-% - The script records RAW ranges (counts) directly.
-% - This bypasses fragile "physical/logical offset" until you have real measured home.
+%   MATLAB/calibration/servo_cal_user.m
 
 clc;
 
@@ -20,25 +16,22 @@ clc;
 port = "COM18";
 baud = 1000000;
 
-% Servo IDs present (your system)
 ids = [1 2 3 4 5 6];
 
-% Coupled pair (must move together)
+% Motors 2 & 3 are coupled and must move together
 coupledPair = [2 3];
 
-% Servo types (true=AX 0..1023, false=MX 0..4095)
-% Your earlier assumption: IDs 4,5,6 are AX; IDs 1,2,3 are MX
-isAX = [false false false true true true];  % aligned with ids order above
+% Servo type by ID order above (true=AX 0..1023, false=MX 0..4095)
+isAX = [false false false true true true];
 
-% Direction sign in MoveIt joint order [base shoulder elbow wrist ee]
-% We'll keep your existing default; you can flip later if needed.
-dirSignMoveIt = [-1 +1 +1 -1 +1];
-
-% MoveIt joints map to servo IDs (5 DOF): [base shoulder elbow wrist ee]
+% MoveIt joint order [base shoulder elbow wrist ee] maps to servo IDs:
 moveitToServoID = [1 2 4 5 6];
 
+% Direction signs for MoveIt joints (keep your current defaults for now)
+dirSignMoveIt = [-1 +1 +1 -1 +1];
+
 % ---------- CONNECT ----------
-addpath(genpath(fullfile(pwd,"scripts"))); %#ok<*MCAP>
+addpath(genpath(fullfile(pwd,"scripts")));
 hw = robot_hw_rb150_raw6motor(port, baud);
 
 fprintf("Torque OFF so you can move by hand...\n");
@@ -52,40 +45,28 @@ fprintf("Try NOT to cross the wrap-around boundary (0) if possible.\n\n");
 rawMin = nan(6,1);
 rawMax = nan(6,1);
 
-% Helper to read raw for a specific ID
-    function r = readRawForID(id)
-        raw6 = hw.readMotors();
-        idx = find(ids==id,1);
-        r = double(raw6(idx));
-    end
+% ---------- CALIBRATE ID1 ----------
+calibrate_single(1);
 
-% ---------- CALIBRATE MOTOR 1 ----------
-cal_one(1);
-
-% ---------- CALIBRATE COUPLED PAIR 2 & 3 ----------
+% ---------- CALIBRATE COUPLED PAIR (2,3) ----------
 fprintf("\n=== Coupled Pair Calibration: IDs 2 & 3 ===\n");
-fprintf("IMPORTANT: Move the coupled shoulder assembly as a unit.\n");
-fprintf("We will record min/max for BOTH IDs 2 and 3.\n\n");
+fprintf("IMPORTANT: Move the coupled shoulder mechanism as a unit.\n\n");
 
 input("Move coupled pair to MIN extreme, then press ENTER...", "s");
-r2a = readRawForID(2); r3a = readRawForID(3);
+r2a = readRaw(2); r3a = readRaw(3);
 fprintf("Captured MIN: ID2=%d, ID3=%d\n", round(r2a), round(r3a));
 
 input("Move coupled pair to MAX extreme, then press ENTER...", "s");
-r2b = readRawForID(2); r3b = readRawForID(3);
+r2b = readRaw(2); r3b = readRaw(3);
 fprintf("Captured MAX: ID2=%d, ID3=%d\n", round(r2b), round(r3b));
 
-[rawMin(2), rawMax(2)] = orderRange(r2a, r2b);
-[rawMin(3), rawMax(3)] = orderRange(r3a, r3b);
+[rawMin(idIndex(2)), rawMax(idIndex(2))] = orderRange(r2a, r2b);
+[rawMin(idIndex(3)), rawMax(idIndex(3))] = orderRange(r3a, r3b);
 
-% Mirror check informational
-fprintf("Mirror check (expected roughly ID3 ~= 4095-ID2 or 1023-ID2 depending config).\n");
-fprintf("This is just INFO: we will enforce your mirror constraint later.\n\n");
-
-% ---------- CALIBRATE MOTORS 4,5,6 ----------
-cal_one(4);
-cal_one(5);
-cal_one(6);
+% ---------- CALIBRATE ID4, ID5, ID6 ----------
+calibrate_single(4);
+calibrate_single(5);
+calibrate_single(6);
 
 % ---------- CAPTURE HOME ----------
 fprintf("\n========================================\n");
@@ -109,8 +90,8 @@ cal.baud = baud;
 cal.servoIDs = ids(:);
 cal.isAX12   = isAX(:);
 
-cal.rawMin  = rawMin;
-cal.rawMax  = rawMax;
+cal.rawMin  = rawMin(:);
+cal.rawMax  = rawMax(:);
 cal.rawHome = rawHome(:);
 
 cal.moveitToServoID = moveitToServoID(:);
@@ -118,13 +99,7 @@ cal.dirSignMoveIt   = dirSignMoveIt(:);
 
 cal.coupledPair = coupledPair(:);
 
-% raw ranges sanity
-bad = isnan(cal.rawMin) | isnan(cal.rawMax) | isnan(cal.rawHome);
-if any(bad)
-    warning("Some calibration values are NaN. Did you skip a step?");
-end
-
-% Ensure home is inside range (warn only)
+% warn if home outside recorded ranges
 for i = 1:6
     if cal.rawHome(i) < cal.rawMin(i) || cal.rawHome(i) > cal.rawMax(i)
         warning("HOME for ID%d (%d) is outside recorded range [%d,%d].", ...
@@ -142,77 +117,68 @@ mPath = fullfile(calDir, "servo_cal_user.m");
 write_cal_function(mPath, cal);
 
 fprintf("\nSaved calibration:\n  %s\n  %s\n", matPath, mPath);
+fprintf("\n(Leave torque OFF for now. You can torque on later in the main demo.)\n");
 
-fprintf("\nYou can now TURN TORQUE ON if you want:\n");
-fprintf("  hw.torqueOn();\n\n");
+% ---------- nested helpers ----------
+    function idx = idIndex(id)
+        idx = find(ids == id, 1);
+        if isempty(idx), error("ID%d not in ids list.", id); end
+    end
 
+    function r = readRaw(id)
+        raw6 = double(hw.readMotors());
+        r = raw6(idIndex(id));
+    end
+
+    function calibrate_single(id)
+        fprintf("\n=== Calibrating ID%d ===\n", id);
+
+        input(sprintf("Move ID%d to MIN extreme, then press ENTER...", id), "s");
+        rA = readRaw(id);
+        fprintf("Captured MIN raw: ID%d=%d\n", id, round(rA));
+
+        input(sprintf("Move ID%d to MAX extreme, then press ENTER...", id), "s");
+        rB = readRaw(id);
+        fprintf("Captured MAX raw: ID%d=%d\n", id, round(rB));
+
+        [mn,mx] = orderRange(rA, rB);
+        rawMin(idIndex(id)) = mn;
+        rawMax(idIndex(id)) = mx;
+    end
 end
 
-% ---------- local helpers ----------
-
-function cal_one(id)
-    fprintf("\n=== Calibrating ID%d ===\n", id);
-    input(sprintf("Move ID%d to MIN extreme, then press ENTER...", id), "s");
-    rA = readRawForID_local(id);
-    fprintf("Captured MIN raw: ID%d=%d\n", id, round(rA));
-
-    input(sprintf("Move ID%d to MAX extreme, then press ENTER...", id), "s");
-    rB = readRawForID_local(id);
-    fprintf("Captured MAX raw: ID%d=%d\n", id, round(rB));
-
-    [mn,mx] = orderRange(rA, rB);
-    assignin("caller", "rawMin", setAt(assignin_get("caller","rawMin"), id, mn));
-    assignin("caller", "rawMax", setAt(assignin_get("caller","rawMax"), id, mx));
-end
-
-function x = assignin_get(ws, name)
-    x = evalin(ws, name);
-end
-
-function v = setAt(v, id, val)
-    ids = evalin("caller","ids");
-    idx = find(ids==id,1);
-    v(idx) = val;
-end
-
-function r = readRawForID_local(id)
-    hw = evalin("caller","hw");
-    ids = evalin("caller","ids");
-    raw6 = hw.readMotors();
-    idx = find(ids==id,1);
-    r = double(raw6(idx));
-end
-
+% ---------- local file helpers ----------
 function [mn,mx] = orderRange(a,b)
-    mn = min(a,b); mx = max(a,b);
+mn = min(a,b);
+mx = max(a,b);
 end
 
 function write_cal_function(path, cal)
-    fid = fopen(path, "w");
-    fprintf(fid, "function cal = servo_cal_user()\n");
-    fprintf(fid, "%% Auto-generated by calibrate_limits_and_home.m on %s\n\n", cal.createdAt);
+fid = fopen(path, "w");
+fprintf(fid, "function cal = servo_cal_user()\n");
+fprintf(fid, "%% Auto-generated by calibrate_limits_and_home.m on %s\n\n", cal.createdAt);
 
-    fprintf(fid, "cal.createdAt = '%s';\n", cal.createdAt);
-    fprintf(fid, "cal.port = '%s';\n", cal.port);
-    fprintf(fid, "cal.baud = %d;\n", cal.baud);
+fprintf(fid, "cal.createdAt = '%s';\n", cal.createdAt);
+fprintf(fid, "cal.port = '%s';\n", cal.port);
+fprintf(fid, "cal.baud = %d;\n", cal.baud);
 
-    fprintf(fid, "cal.servoIDs = [%s]';\n", numlist(cal.servoIDs));
-    fprintf(fid, "cal.isAX12   = [%s]';\n", numlist(double(cal.isAX12)));
+fprintf(fid, "cal.servoIDs = [%s]'';\n", numlist(cal.servoIDs));
+fprintf(fid, "cal.isAX12   = [%s]'';\n", numlist(double(cal.isAX12)));
 
-    fprintf(fid, "cal.rawMin  = [%s]';\n", numlist(cal.rawMin));
-    fprintf(fid, "cal.rawMax  = [%s]';\n", numlist(cal.rawMax));
-    fprintf(fid, "cal.rawHome = [%s]';\n", numlist(cal.rawHome));
+fprintf(fid, "cal.rawMin  = [%s]'';\n", numlist(cal.rawMin));
+fprintf(fid, "cal.rawMax  = [%s]'';\n", numlist(cal.rawMax));
+fprintf(fid, "cal.rawHome = [%s]'';\n", numlist(cal.rawHome));
 
-    fprintf(fid, "cal.moveitToServoID = [%s]';\n", numlist(cal.moveitToServoID));
-    fprintf(fid, "cal.dirSignMoveIt   = [%s]';\n", numlist(cal.dirSignMoveIt));
+fprintf(fid, "cal.moveitToServoID = [%s]'';\n", numlist(cal.moveitToServoID));
+fprintf(fid, "cal.dirSignMoveIt   = [%s]'';\n", numlist(cal.dirSignMoveIt));
 
-    fprintf(fid, "cal.coupledPair = [%s]';\n", numlist(cal.coupledPair));
-    fprintf(fid, "end\n");
-    fclose(fid);
+fprintf(fid, "cal.coupledPair = [%s]'';\n", numlist(cal.coupledPair));
+fprintf(fid, "end\n");
+fclose(fid);
 end
 
 function s = numlist(v)
-    v = double(v(:))';
-    s = sprintf("%.0f ", v);
-    s = strtrim(s);
+v = double(v(:))';
+s = sprintf("%.0f ", v);
+s = strtrim(s);
 end
