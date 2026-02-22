@@ -1,64 +1,59 @@
 function hw = robot_hw_rb150_calibrated_6motor(port, baud)
 % robot_hw_rb150_calibrated_6motor
-% Uses RB150 firmware protocol:
-%   send: 'J' + 12 bytes (6x uint16 LE)
-%   recv: 12 bytes (6x uint16 LE)
-%   'Q' -> 12 bytes
-%   'T 1' / 'T 0' -> "OK TON"/"OK TOFF" line
+% High-level hardware wrapper using user calibration.
+% Exposes:
+%   hw.readMotors() -> raw6
+%   hw.readJoints() -> theta5 (MoveIt)
+%   hw.sendJoints(theta5)
+%   hw.torqueOn(), hw.torqueOff()
 
 cal = servo_calibration();
 
 s = serialport(port, baud, "Timeout", 2);
+configureTerminator(s, "LF");
 flush(s);
 
-hw.sendJoints = @sendJoints;   % input: 5x1 MoveIt radians
-hw.readJoints = @readJoints;   % output: 5x1 MoveIt radians
-hw.readMotors = @readMotors;   % output: 6x1 raw
+hw.readMotors = @readMotors;
+hw.readJoints = @readJoints;
+hw.sendJoints = @sendJoints;
 hw.torqueOn   = @() torqueCmd(true);
 hw.torqueOff  = @() torqueCmd(false);
 hw.close      = @closePort;
 
-    function pos = sendJoints(theta5)
-        theta5 = theta5(:);
-
-        [goals6, ~] = moveit_rad_to_servo(theta5, cal);
-        meas6 = sendRawGoals6(goals6);
-
-        pos.goal6 = double(goals6(:));
-        pos.meas6 = double(meas6(:));
-        pos.theta5_meas = servo_to_moveit_rad(double(meas6(:)), cal);
-    end
-
-    function theta5 = readJoints()
-        meas6 = double(readMotors());
-        theta5 = servo_to_moveit_rad(meas6, cal);
-    end
-
-    function meas6 = sendRawGoals6(goals6)
-        goals6 = uint16(goals6(:));
-        flush(s);
-        write(s, uint8('J'), "uint8");
-        write(s, typecast(goals6, "uint8"), "uint8");  % 12 bytes
-        raw = read(s, 12, "uint8");
-        meas6 = typecast(uint8(raw), "uint16");
-        meas6 = meas6(:);
-    end
-
-    function meas6 = readMotors()
+    function raw6 = readMotors()
         flush(s);
         write(s, uint8('Q'), "uint8");
         raw = read(s, 12, "uint8");
-        meas6 = typecast(uint8(raw), "uint16");
-        meas6 = meas6(:);
+        raw6 = typecast(uint8(raw), "uint16");
+        raw6 = double(raw6(:));
+    end
+
+    function theta5 = readJoints()
+        raw6 = readMotors();
+        theta5 = servo_to_moveit_rad(raw6, cal);
+    end
+
+    function sendJoints(theta5)
+        raw6 = moveit_rad_to_servo(theta5, cal);
+
+        % Send as ASCII command: J r1 r2 r3 r4 r5 r6\n
+        cmd = sprintf("J %d %d %d %d %d %d\n", round(raw6(1)), round(raw6(2)), round(raw6(3)), round(raw6(4)), round(raw6(5)), round(raw6(6)));
+        write(s, uint8(cmd), "uint8");
+
+        % optional response line
+        try
+            msg = readline(s);
+            disp(strtrim(msg));
+        catch
+        end
     end
 
     function torqueCmd(on)
         flush(s);
-        configureTerminator(s, "LF");
         if on
-            write(s, uint8(['T',' ','1']), "uint8");
+            write(s, uint8("T 1"+newline), "uint8");
         else
-            write(s, uint8(['T',' ','0']), "uint8");
+            write(s, uint8("T 0"+newline), "uint8");
         end
         try
             msg = readline(s);
@@ -68,6 +63,7 @@ hw.close      = @closePort;
     end
 
     function closePort()
+        try, flush(s); catch, end
         clear s
     end
 end
