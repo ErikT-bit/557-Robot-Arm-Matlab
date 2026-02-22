@@ -1,11 +1,11 @@
 function hw = robot_hw_rb150_calibrated_6motor(port, baud)
 % robot_hw_rb150_calibrated_6motor
-% High-level hardware wrapper using user calibration.
-% Exposes:
-%   hw.readMotors() -> raw6
-%   hw.readJoints() -> theta5 (MoveIt)
-%   hw.sendJoints(theta5)
-%   hw.torqueOn(), hw.torqueOff()
+% High-level RB150 interface using user calibration.
+% Commands expected by RB150 firmware:
+%   Q            -> returns 12 bytes (6 x uint16 LE)
+%   J a b c d e f\n  -> set 6 goal positions (raw counts)
+%   T 1\n        -> torque ON
+%   T 0\n        -> torque OFF
 
 cal = servo_calibration();
 
@@ -36,11 +36,14 @@ hw.close      = @closePort;
     function sendJoints(theta5)
         raw6 = moveit_rad_to_servo(theta5, cal);
 
-        % Send as ASCII command: J r1 r2 r3 r4 r5 r6\n
-        cmd = sprintf("J %d %d %d %d %d %d\n", round(raw6(1)), round(raw6(2)), round(raw6(3)), round(raw6(4)), round(raw6(5)), round(raw6(6)));
+        cmd = sprintf('J %d %d %d %d %d %d\n', ...
+            round(raw6(1)), round(raw6(2)), round(raw6(3)), ...
+            round(raw6(4)), round(raw6(5)), round(raw6(6)));
+
+        flush(s);
         write(s, uint8(cmd), "uint8");
 
-        % optional response line
+        % optional response line "OK ..."
         try
             msg = readline(s);
             disp(strtrim(msg));
@@ -50,11 +53,16 @@ hw.close      = @closePort;
 
     function torqueCmd(on)
         flush(s);
+
         if on
-            write(s, uint8("T 1"+newline), "uint8");
+            cmd = sprintf('T 1\n');
         else
-            write(s, uint8("T 0"+newline), "uint8");
+            cmd = sprintf('T 0\n');
         end
+
+        write(s, uint8(cmd), "uint8");
+
+        % optional response
         try
             msg = readline(s);
             disp(strtrim(msg));
