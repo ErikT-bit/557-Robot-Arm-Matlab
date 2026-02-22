@@ -1,56 +1,59 @@
 function report_servo_limit_violations(raw6, cal)
-% report_servo_limit_violations
-% raw6: 6x1 raw counts in order cal.servoIDs = [1..6]
-% cal: from servo_calibration()
-
 raw6 = double(raw6(:));
-if numel(raw6) ~= 6
-    error("raw6 must be 6x1.");
-end
+if numel(raw6) ~= 6, error("raw6 must be 6x1."); end
 
-% raw -> physical deg
-physDeg = zeros(6,1);
-for i = 1:6
-    if cal.isAX12(i)
-        physDeg(i) = raw6(i) * (300/1023);
-    else
-        physDeg(i) = raw6(i) * (360/4095);
-    end
-end
-
-% physical -> logical
-logicalDeg = physDeg - (cal.physOffset(:) - 180.0);
-
-% check bounds
+ids = cal.servoIDs(:);
 viol = false(6,1);
+
 for i = 1:6
-    if logicalDeg(i) < cal.logicalLower(i) || logicalDeg(i) > cal.logicalUpper(i)
-        viol(i) = true;
+    Rmax = cal.rawRangeMax(i);
+    r  = wrap_raw(raw6(i), Rmax);
+    mn = wrap_raw(cal.allowedMin(i), Rmax);
+    mx = wrap_raw(cal.allowedMax(i), Rmax);
+
+    if mn <= mx
+        ok = (r >= mn) && (r <= mx);
+    else
+        ok = (r >= mn) || (r <= mx);
     end
+    viol(i) = ~ok;
 end
 
 if any(viol)
-    fprintf("LIMIT VIOLATIONS (logical deg):\n");
+    fprintf("LIMIT VIOLATIONS (raw counts):\n");
     for i = 1:6
         if viol(i)
-            fprintf("  ID%d: logical=%.1f  (limit [%.1f, %.1f])  raw=%.0f\n", ...
-                cal.servoIDs(i), logicalDeg(i), cal.logicalLower(i), cal.logicalUpper(i), raw6(i));
+            fprintf("  ID%d: raw=%d  allowed=[%d..%d]%s\n", ...
+                ids(i), round(raw6(i)), round(cal.allowedMin(i)), round(cal.allowedMax(i)), ...
+                tern(cal.wraps(i)," (wrap)",""));
         end
     end
 else
-    fprintf("No motor calibration-limit violations.\n");
+    fprintf("No motor RAW-limit violations.\n");
 end
 
-% mirror consistency check (info)
-idx2 = find(cal.servoIDs == cal.mirrorSourceID, 1);
-idx3 = find(cal.servoIDs == cal.mirrorTargetID, 1);
-mirrorExpected = 360.0 - logicalDeg(idx2);
-mirrorErr = wrap360(logicalDeg(idx3)) - wrap360(mirrorExpected);
-mirrorErr = wrap180(mirrorErr);
-fprintf("Mirror check: ID3 logical=%.1f, expected=%.1f, err=%.1f deg\n", ...
-    logicalDeg(idx3), mirrorExpected, mirrorErr);
+% Coupled check info: is ID2 mirroring ID3 around their homes?
+idx2 = find(ids==cal.coupledMirrorID,1);
+idx3 = find(ids==cal.coupledLeadID,1);
+d3 = shortest_delta_counts(raw6(idx3), cal.rawHome(idx3), cal.rawRangeMax(idx3));
+d2 = shortest_delta_counts(raw6(idx2), cal.rawHome(idx2), cal.rawRangeMax(idx2));
+fprintf("Coupled check: d3=%+.0f counts, d2=%+.0f counts (expect d2≈-d3)\n", d3, d2);
 
 end
 
-function a = wrap360(x), a = mod(x,360); end
-function a = wrap180(x), a = mod(x+180,360)-180; end
+function s = tern(cond,a,b)
+if cond, s=a; else, s=b; end
+end
+
+function r = wrap_raw(r, Rmax)
+r = mod(round(r), Rmax+1);
+end
+
+function d = shortest_delta_counts(r, r0, Rmax)
+r  = wrap_raw(r,  Rmax);
+r0 = wrap_raw(r0, Rmax);
+d = r - r0;
+half = (Rmax+1)/2;
+if d > half,  d = d - (Rmax+1); end
+if d < -half, d = d + (Rmax+1); end
+end
