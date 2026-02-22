@@ -1,4 +1,4 @@
-function [theta_rad, logicalAngles] = servo_to_moveit_rad(rawPos, cal)
+function theta_rad = servo_to_moveit_rad(rawPos, cal)
 % servo_to_moveit_rad
 % Convert 6 raw servo present positions -> 5 MoveIt joint radians.
 % rawPos: 6x1 in order IDs [1 2 3 4 5 6] (same order as cal.servoIDs)
