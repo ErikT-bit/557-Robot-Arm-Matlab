@@ -1,64 +1,63 @@
 function strokes = sketchpad_capture()
-% Mouse sketch capture:
-% - Hold LEFT mouse button = pen down (draw)
-% - Release = pen up (stroke ends)
-% - Press ENTER to finish
-%
-% Output: strokes is a cell array where each element has:
-%   strokes{k}.xy      -> 2xN points in figure coordinates
-%   strokes{k}.penDown -> true (segment represents contact stroke)
-
-fig = figure("Name","Sketchpad (hold LMB to draw, release = pen up, Enter = done)");
-axis equal; grid on; hold on;
-xlabel("x"); ylabel("y");
-title("Hold LEFT mouse to draw. Release = pen-up. Press ENTER to finish.");
+% sketchpad_capture
+% Fixed axis limits (0..1) to avoid MATLAB auto-scaling weirdness.
+% Left-click drag = draw. Release = end stroke.
+% Press 'd' to finish.
 
 strokes = {};
-current = [];
-isDown = false;
+cur = [];
+drawing = false;
 
-set(fig, "WindowButtonDownFcn", @onDown);
-set(fig, "WindowButtonUpFcn",   @onUp);
-set(fig, "WindowButtonMotionFcn", @onMove);
-set(fig, "KeyPressFcn", @onKey);
+fig = figure('Name','Sketchpad (drag to draw, press d when done)','NumberTitle','off');
+ax = axes(fig);
+axis(ax, [0 1 0 1]);
+axis(ax, 'equal');
+grid(ax, 'on');
+hold(ax, 'on');
+title(ax, "Drag with LEFT mouse to draw. Release to end stroke. Press 'd' when done.");
+
+set(fig, 'WindowButtonDownFcn', @onDown);
+set(fig, 'WindowButtonUpFcn',   @onUp);
+set(fig, 'WindowButtonMotionFcn', @onMove);
+set(fig, 'KeyPressFcn', @onKey);
 
 uiwait(fig);
 
     function onDown(~,~)
-        isDown = true;
-        cp = get(gca,"CurrentPoint"); 
-        p = cp(1,1:2).';
-        current = p;
-        plot(p(1), p(2), ".", "MarkerSize", 10);
+        if ~strcmp(get(fig,'SelectionType'),'normal')
+            return;
+        end
+        drawing = true;
+        cur = [];
+        onMove();
     end
 
     function onMove(~,~)
-        if ~isDown, return; end
-        cp = get(gca,"CurrentPoint"); 
-        p = cp(1,1:2).';
-        current(:,end+1) = p; %#ok<AGROW>
-        plot(current(1,end-1:end), current(2,end-1:end), "-");
-        drawnow limitrate;
+        if ~drawing, return; end
+        pt = get(ax,'CurrentPoint');
+        x = pt(1,1); y = pt(1,2);
+        x = max(0, min(1, x));
+        y = max(0, min(1, y));
+        cur = [cur; x y]; %#ok<AGROW>
+        plot(ax, x, y, '.');
+        drawnow limitrate
     end
 
     function onUp(~,~)
-        if ~isDown, return; end
-        isDown = false;
-
-        if size(current,2) >= 2
-            s = struct();
-            s.xy = current;
-            s.penDown = true;
-            strokes{end+1} = s; %#ok<AGROW>
+        if ~drawing, return; end
+        drawing = false;
+        if size(cur,1) >= 2
+            strokes{end+1} = cur; %#ok<AGROW>
+            plot(ax, cur(:,1), cur(:,2), '-');
         end
-
-        current = [];
+        cur = [];
+        drawnow
     end
 
     function onKey(~,evt)
-        if strcmp(evt.Key,"return")
+        if strcmpi(evt.Key,'d')
             uiresume(fig);
-            close(fig);
+            if isvalid(fig), close(fig); end
         end
     end
 end
