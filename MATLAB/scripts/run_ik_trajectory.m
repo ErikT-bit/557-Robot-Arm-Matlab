@@ -1,20 +1,33 @@
 function thetaTraj = run_ik_trajectory(robot, poses, theta0, eomg, ev, maxIters)
-% Sequential IK solve (warm start):
-% theta_{i+1} starts from theta_i so it converges quickly.
+%RUN_IK_TRAJECTORY Solve IK for a sequence of desired end-effector poses.
+% Note: MR IKinSpace does not accept maxIters, so maxIters is not used here.
 
-n = size(robot.Slist,2);
-thetaTraj = zeros(n, numel(poses));
+n = numel(theta0);
+
+% Support poses as struct array with .T or a cell array of 4x4
+if isstruct(poses)
+    N = numel(poses);
+    getT = @(k) poses(k).T;
+elseif iscell(poses)
+    N = numel(poses);
+    getT = @(k) poses{k};
+else
+    error("poses must be a struct array (with field .T) or a cell array of 4x4 transforms");
+end
+
+thetaTraj = zeros(n, N);
 theta = theta0;
 
-for i = 1:numel(poses)
-    Tsd = poses{i};
+for k = 1:N
+    Tsd = getT(k);
 
-    [theta, success] = IKinSpace(robot.Slist, robot.M, Tsd, theta, eomg, ev, maxIters);
+    % MR IKinSpace signature: (Slist, M, T, thetalist0, eomg, ev)
+    [theta, success] = IKinSpace(robot.Slist, robot.M, Tsd, theta, eomg, ev);
 
     if ~success
-        error("IK failed at pose %d. Try smaller drawing / better plane / looser tolerances.", i);
+        error("IK failed at waypoint %d/%d. Try a different seed or relax tolerances.", k, N);
     end
 
-    thetaTraj(:,i) = theta;
+    thetaTraj(:,k) = theta;
 end
 end

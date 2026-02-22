@@ -51,6 +51,15 @@ end
 % --- Walk from tip back to base to find chain ---
 chainJoints = strings(0);
 link = string(tipLink);
+% sanity check: ensure tipLink actually exists as a link in the URDF
+linkNodes = doc.getElementsByTagName("link");
+allLinks = strings(linkNodes.getLength,1);
+for ii = 0:linkNodes.getLength-1
+    allLinks(ii+1) = string(linkNodes.item(ii).getAttribute("name"));
+end
+if ~any(allLinks == string(tipLink))
+    error("tipLink '%s' not found in URDF links.", tipLink);
+end
 while link ~= string(baseLink)
     if ~isKey(childToJoint, link)
         error("Cannot find joint whose child link is '%s'. Check base/tip names.", link);
