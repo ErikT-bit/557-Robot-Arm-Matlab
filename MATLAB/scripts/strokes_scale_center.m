@@ -1,29 +1,36 @@
-function strokesOut = strokes_scale_center(strokes, desiredHeight_m)
-% Scales strokes so total height = desiredHeight_m and centers at (0,0).
-%
-% Input strokes{k}.xy is 2xN in arbitrary sketch units.
-% Output strokesOut{k}.xy is 2xN in meters (scaled).
+function strokes2 = strokes_scale_center(strokes, desiredHeight_m)
+% strokes_scale_center
+% strokes: cell array of Nx2 in normalized sketch coords
+% Output is centered in XY, scaled so height becomes desiredHeight_m.
 
-allPts = [];
-for k = 1:numel(strokes)
-    allPts = [allPts, strokes{k}.xy]; %#ok<AGROW>
+if isempty(strokes)
+    error("No strokes captured.");
 end
 
-minXY = min(allPts,[],2);
-maxXY = max(allPts,[],2);
-height = maxXY(2) - minXY(2);
+% stack points to get bounds
+allPts = cell2mat(strokes(:));
+xmin = min(allPts(:,1)); xmax = max(allPts(:,1));
+ymin = min(allPts(:,2)); ymax = max(allPts(:,2));
 
-if height < 1e-9
-    error("Drawing height is ~zero. Draw something with vertical extent.");
+w = xmax - xmin;
+h = ymax - ymin;
+if h < 1e-9
+    error("Captured drawing has near-zero height.");
 end
 
-scale = desiredHeight_m / height;
-center = (minXY + maxXY)/2;
+scale = desiredHeight_m / h;
 
-strokesOut = strokes;
-for k = 1:numel(strokes)
-    xy = strokes{k}.xy;
-    xy = (xy - center) * scale;
-    strokesOut{k}.xy = xy;
+strokes2 = cell(size(strokes));
+for i = 1:numel(strokes)
+    P = strokes{i};
+    P(:,1) = (P(:,1) - (xmin+xmax)/2) * scale;
+    P(:,2) = (P(:,2) - (ymin+ymax)/2) * scale;
+    strokes2{i} = P;
+end
+
+% width check (informational)
+desiredWidth_m = w * scale;
+if desiredWidth_m > 0.20
+    warning("Scaled drawing width = %.1f cm (may exceed your board window).", 100*desiredWidth_m);
 end
 end
