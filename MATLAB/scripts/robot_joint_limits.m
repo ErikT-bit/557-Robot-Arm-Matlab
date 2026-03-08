@@ -1,30 +1,12 @@
 function limits = robot_joint_limits()
-% ROBOT_JOINT_LIMITS  Zero-centered joint limits from the ROS/MoveIt URDF.
-%
-% These are the ACTUAL operational limits of the physical arm, extracted
-% from the me557_pen.urdf used by MoveIt in the Otis-Spunkmeyer/ME_557_Robot
-% repository.  The joint order matches the 5 actuated joints used in
-% main_writeboard_demo.m:
-%
-%   [RotatingBaseJoint, ShoulderJoint, ElbowJoint, WristJoint, PenJoint]
-%
-% which correspond to the MoveIt joint names:
-%
-%   [Motor1_joint, Motor2_L, Motor4_elb, Motor5_wr, Joint_EE]
-%
-% USAGE:
-%   limits = robot_joint_limits();
-%   theta  = IKinSpace(...);
-%   theta  = clamp_to_limits(theta, limits);
+% robot_joint_limits
+% ROS/MoveIt zero-centered operational limits (radians).
+% Order: [base; shoulder; elbow; wrist; ee]
 
-%                     Base      Shoulder  Elbow     Wrist     EE
-limits.lower     = [ -0.87265; -1.04720; -1.87623; -0.95995; -1.17810 ];
-limits.upper     = [  0.87265;  1.04720;  1.87623;  0.95995;  1.17810 ];
-
-% Readable names (for display / debugging)
-limits.names = ["RotatingBase"; "Shoulder"; "Elbow"; "Wrist"; "PenEE"];
-
-% Degrees (convenience)
-limits.lower_deg = limits.lower * (180/pi);
-limits.upper_deg = limits.upper * (180/pi);
+limits = [ ...
+   -0.87265, +0.87265;   % base   (-50  to +50 deg)
+   -1.04720, +1.04720;   % shoulder (-60 to +60 deg)
+   -1.87623, +1.87623;   % elbow (-107.5 to +107.5 deg)
+   -0.95995, +0.95995;   % wrist (-55 to +55 deg)
+   -1.17810, +1.17810];  % ee    (-67.5 to +67.5 deg)
 end

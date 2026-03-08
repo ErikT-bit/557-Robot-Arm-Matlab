@@ -1,102 +1,71 @@
 function raw6 = moveit_rad_to_servo(theta5, cal)
 % moveit_rad_to_servo
-% theta5: 5x1 MoveIt joints [base shoulder elbow wrist pen] in radians
-% raw6: 6x1 raw goals ordered by cal.servoIDs
+% Converts 5 MoveIt joint angles (rad) -> 6 raw servo goals.
+%
+% MoveIt joint order:
+%   [base shoulder elbow wrist pen]
+%
+% Coupled pair rule:
+%   ID2 is the commanded shoulder motor
+%   ID3 mirrors ID2 about the HOME relationship:
+%       d2 = raw2 - rawHome2
+%       d3 = -d2
+%       raw3 = rawHome3 + d3
 
-theta5 = double(theta5(:));
+theta5 = theta5(:);
 if numel(theta5) ~= 5
     error("theta5 must be 5x1.");
 end
 
-ids = cal.servoIDs(:);
-raw6 = double(cal.rawHome(:));   % start at home raw
+ids = double(cal.servoIDs(:));
+isAX = logical(cal.isAX12(:));
+rawHome = double(cal.rawHome(:));
 
-% Convert each MoveIt joint to its servo raw (using home + delta counts)
-for j = 1:5
-    sid = cal.moveitToServoID(j);
-    idx = find(ids == sid, 1);
-
-    Rmax = cal.rawRangeMax(idx);
-
-    % counts per rad
-    if cal.isAX12(idx)
-        counts_per_rad = (1023/300) * (180/pi);   % AX: 300° span over 1023
-    else
-        counts_per_rad = (4095/360) * (180/pi);   % MX: 360° span over 4095
-    end
-
-    dCounts = cal.dirSignMoveIt(j) * theta5(j) * counts_per_rad;
-    rawCmd  = cal.rawHome(idx) + dCounts;
-
-    % wrap + clamp
-    rawCmd = wrap_raw(rawCmd, Rmax);
-    rawCmd = clamp_raw_allowed(rawCmd, cal.allowedMin(idx), cal.allowedMax(idx), Rmax);
-
-    raw6(idx) = rawCmd;
+if numel(ids) ~= 6 || numel(isAX) ~= 6 || numel(rawHome) ~= 6
+    error("Calibration fields must all be length 6.");
 end
 
-% ---- Coupled pair enforcement: ID3 leads, ID2 mirrors ----
-idx2 = find(ids == cal.coupledMirrorID, 1); % ID2
-idx3 = find(ids == cal.coupledLeadID,   1); % ID3
+% Keep this mapping explicit and simple:
+% [base shoulder elbow wrist pen] -> [ID1 ID2 ID4 ID5 ID6]
+moveitToServoID = [1; 2; 4; 5; 6];
 
-Rmax3 = cal.rawRangeMax(idx3);
-Rmax2 = cal.rawRangeMax(idx2);
-
-% delta of leader from its home (shortest signed delta in counts)
-d3 = shortest_delta_counts(raw6(idx3), cal.rawHome(idx3), Rmax3);
-
-% mirror means opposite delta around its own home
-raw2 = cal.rawHome(idx2) - d3;
-
-raw2 = wrap_raw(raw2, Rmax2);
-raw2 = clamp_raw_allowed(raw2, cal.allowedMin(idx2), cal.allowedMax(idx2), Rmax2);
-
-raw6(idx2) = raw2;
-
-end
-
-% ---------- helpers ----------
-function r = wrap_raw(r, Rmax)
-r = mod(round(r), Rmax+1);
-end
-
-function d = shortest_delta_counts(r, r0, Rmax)
-% returns signed delta in counts from r0 to r in [-R/2, R/2]
-r  = wrap_raw(r,  Rmax);
-r0 = wrap_raw(r0, Rmax);
-d = r - r0;
-half = (Rmax+1)/2;
-if d > half,  d = d - (Rmax+1); end
-if d < -half, d = d + (Rmax+1); end
-end
-
-function r = clamp_raw_allowed(r, mn, mx, Rmax)
-% clamps r to nearest boundary if outside allowed (wrap-aware)
-r  = wrap_raw(r,  Rmax);
-mn = wrap_raw(mn, Rmax);
-mx = wrap_raw(mx, Rmax);
-
-if mn <= mx
-    if r < mn, r = mn; end
-    if r > mx, r = mx; end
+if isfield(cal,"dirSignMoveIt") && numel(cal.dirSignMoveIt) == 5
+    dirSignMoveIt = double(cal.dirSignMoveIt(:));
 else
-    % allowed: [mn..Rmax] U [0..mx]
-    if ~(r >= mn || r <= mx)
-        % outside: decide nearest boundary by circular distance
-        d_to_mn = circ_dist(r, mn, Rmax);
-        d_to_mx = circ_dist(r, mx, Rmax);
-        if d_to_mn < d_to_mx
-            r = mn;
-        else
-            r = mx;
-        end
-    end
-end
+    dirSignMoveIt = [-1; +1; +1; -1; +1];
 end
 
-function d = circ_dist(a,b,Rmax)
-% minimal circular distance in counts
-a = wrap_raw(a,Rmax); b = wrap_raw(b,Rmax);
-d = abs(a-b);
-d = min(d, (Rmax+1)-d);
+% counts per radian
+cpr = zeros(6,1);
+for i = 1:6
+    if isAX(i)
+        cpr(i) = 1023 / deg2rad(300);
+    else
+        cpr(i) = 4095 / deg2rad(360);
+    end
+end
+
+raw6 = rawHome;
+
+% Directly command IDs 1,2,4,5,6 from the 5-DOF vector
+for j = 1:5
+    id = moveitToServoID(j);
+    idx = find(ids == id, 1);
+    if isempty(idx)
+        error("Servo ID %d not found in cal.servoIDs.", id);
+    end
+    raw6(idx) = rawHome(idx) + dirSignMoveIt(j) * theta5(j) * cpr(idx);
+end
+
+% Coupled pair: ID2 commanded directly, ID3 mirrors ID2 about HOME
+idx2 = find(ids == 2, 1);
+idx3 = find(ids == 3, 1);
+if isempty(idx2) || isempty(idx3)
+    error("Could not find IDs 2 and 3 in cal.servoIDs.");
+end
+
+d2 = raw6(idx2) - rawHome(idx2);
+raw6(idx3) = rawHome(idx3) - d2;
+
+raw6 = round(raw6(:));
 end
